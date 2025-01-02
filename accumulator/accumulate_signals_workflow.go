@@ -1,7 +1,6 @@
 package accumulator
 
 import (
-	"strconv"
 	"time"
 
 	"go.temporal.io/sdk/workflow"
@@ -26,10 +25,10 @@ import (
  *   signal with the GetNextTimeout() function.
  */
 
-// signalToSignalTimeout is them maximum time between signals
+// signalToSignalTimeout is the time to wait after a signal is received
 const signalToSignalTimeout = 30 * time.Second
 
-// fromStartTimeout is the maximum time to receive all signals
+// fromStartTimeout is the minimum time to wait from start even if a signal isn't received
 const fromStartTimeout = 60 * time.Second
 
 // exitTimeout is the time to wait after exit is requested to catch any last few signals
@@ -48,11 +47,11 @@ type GreetingsInfo struct {
 	startTime          time.Time
 }
 
-// GetNextTimeout returns the maximum time for a workflow to wait for the next signal.
+// getNextTimeout returns the maximum time for a workflow to wait for the next signal.
 // This waits for the greater of the remaining fromStartTimeout and  signalToSignalTimeout
 // fromStartTimeout and signalToSignalTimeout can be adjusted to wait for the right amount of time as desired
 // This resets with Continue As New
-func (a *AccumulateGreeting) GetNextTimeout(ctx workflow.Context, startTime time.Time, exitRequested bool) (time.Duration, error) {
+func getNextTimeout(ctx workflow.Context, startTime time.Time, exitRequested bool) (time.Duration, error) {
 	if exitRequested {
 		return exitTimeout, nil
 	}
@@ -91,40 +90,48 @@ func AccumulateSignalsWorkflow(ctx workflow.Context, greetings GreetingsInfo) (a
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 
+	// set up signal channels
+	workflow.Go(ctx, func(ctx workflow.Context) {
+		for {
+			selector := workflow.NewSelector(ctx)
+			selector.AddReceive(workflow.GetSignalChannel(ctx, "greeting"), func(c workflow.ReceiveChannel, more bool) {
+				c.Receive(ctx, &a)
+				unprocessedGreetings = append(unprocessedGreetings, a)
+			})
+			selector.Select(ctx)
+		}
+	})
+
+	workflow.Go(ctx, func(ctx workflow.Context) {
+		for {
+			selector := workflow.NewSelector(ctx)
+			selector.AddReceive(workflow.GetSignalChannel(ctx, "exit"), func(c workflow.ReceiveChannel, more bool) {
+				c.Receive(ctx, nil)
+				exitRequested = true
+			})
+			selector.Select(ctx)
+		}
+	})
+
+	// wait for signals to come in
 	for !workflow.GetInfo(ctx).GetContinueAsNewSuggested() {
 
-		timeout, err := a.GetNextTimeout(ctx, greetings.startTime, exitRequested)
-		childCtx, cancelHandler := workflow.WithCancel(ctx)
-		selector := workflow.NewSelector(ctx)
+		timeout, err := getNextTimeout(ctx, greetings.startTime, exitRequested)
 
 		if err != nil {
 			log.Error("Error calculating timeout")
 			return "", err
 		}
-		log.Debug("Awaiting for " + timeout.String())
-		selector.AddReceive(workflow.GetSignalChannel(ctx, "greeting"), func(c workflow.ReceiveChannel, more bool) {
-			c.Receive(ctx, &a)
-			unprocessedGreetings = append(unprocessedGreetings, a)
-			log.Debug("Signal Received with text: " + a.GreetingText + ", more?: " + strconv.FormatBool(more) + "\n")
-			cancelHandler() // cancel timer future
-			a = AccumulateGreeting{}
-		})
-		selector.AddReceive(workflow.GetSignalChannel(ctx, "exit"), func(c workflow.ReceiveChannel, more bool) {
-			c.Receive(ctx, nil)
-			exitRequested = true
-			cancelHandler() // cancel timer future
-			log.Debug("Exit Signal Received, more?: " + strconv.FormatBool(more) + "\n")
-		})
-
-		timerFuture := workflow.NewTimer(childCtx, timeout)
-		selector.AddFuture(timerFuture, func(f workflow.Future) {
-			log.Debug("Timer fired \n")
-		})
-
-		selector.Select(ctx)
+		log.Info("Awaiting", "timeout", timeout.String())
+		
+		sleepErr := workflow.Sleep(ctx, 10*time.Second)
+		if sleepErr != nil {
+			log.Error("Error sleeping")
+			return "", err
+		}
 
 		if len(unprocessedGreetings) == 0 { // timeout without a signal coming in, so let's process the greetings and wrap it up!
-			log.Debug("Into final processing, received greetings count: " + strconv.Itoa(len(greetings.GreetingsList)) + "\n")
+			log.Info("Into final processing", "greeting count", len(greetings.GreetingsList))
 			allGreetings = ""
 			err := workflow.ExecuteActivity(ctx, ComposeGreeting, greetings.GreetingsList).Get(ctx, &allGreetings)
 			if err != nil {
@@ -132,11 +139,11 @@ func AccumulateSignalsWorkflow(ctx workflow.Context, greetings GreetingsInfo) (a
 				return allGreetings, err
 			}
 
-			if !selector.HasPending() { // in case a signal came in while activity was running, check again
-				return allGreetings, nil
-			} else {
-				log.Info("Received a signal while processing ComposeGreeting activity.")
-			}
+			// if !selector.HasPending() { // in case a signal came in while activity was running, check again
+			// 	return allGreetings, nil
+			// } else {
+			// 	log.Info("Received a signal while processing ComposeGreeting activity.")
+			// }
 		}
 
 		/* process latest signals
@@ -148,7 +155,7 @@ func AccumulateSignalsWorkflow(ctx workflow.Context, greetings GreetingsInfo) (a
 		 * Using update validation could improve this in the future
 		 */
 		toProcess := unprocessedGreetings
-		unprocessedGreetings = []AccumulateGreeting{}
+		unprocessedGreetings = nil
 
 		for _, ug := range toProcess {
 			if ug.Bucket != greetings.BucketKey {
@@ -163,6 +170,6 @@ func AccumulateSignalsWorkflow(ctx workflow.Context, greetings GreetingsInfo) (a
 
 	}
 
-	log.Debug("Accumulate workflow starting new run with " + strconv.Itoa(len(greetings.GreetingsList)) + " greetings.")
+	log.Info("Accumulate workflow continuing as new", "greeting count", len(greetings.GreetingsList))
 	return "Continued As New.", workflow.NewContinueAsNewError(ctx, AccumulateSignalsWorkflow, greetings)
 }

@@ -8,7 +8,7 @@ import (
 
 	"math/rand"
 
-	accumulator "github.com/temporalio/samples-go/accumulator"
+	"github.com/temporalio/samples-go/accumulator"
 	"go.temporal.io/sdk/client"
 )
 
@@ -29,7 +29,7 @@ func main() {
 	// setup which tests to run
 	// by default it will run an accumulation with a few (20) signals
 	// to a set of 4 buckets with Signal To Start
-	triggerContinueAsNewWarning := false
+	triggerContinueAsNewWarning := true
 
 	testSignalEdgeCases := true
 	// configure signal edge cases to test
@@ -122,7 +122,7 @@ func main() {
 	if err != nil {
 		log.Fatalln("Unable to signal workflow", err)
 	}
-	log.Println("Sent " + suzieGreeting.GreetingText + " to " + we.GetID())
+	log.Println("Sent greeting", "workflow", we.GetID(), "greeting", suzieGreeting.GreetingText)
 
 	// This test signals exit, then waits for the workflow to end
 	// signals after this will error, as the workflow execution already completed
@@ -131,13 +131,13 @@ func main() {
 		if err != nil {
 			log.Fatalln("Unable to signal workflow", err)
 		}
-		log.Println(we.GetID() + ":Sent exit")
+		log.Println("Sent exit signal", "workflow", we.GetID())
 		var exitSignalResults string
 		err = we.Get(context.Background(), &exitSignalResults)
 		if err != nil {
 			log.Fatalln("Unable to get workflow results", err)
 		}
-		log.Println(we.GetID() + "-" + exitSignalResults + ": execution results: " + exitSignalResults)
+		log.Println("Workflow exited", "workflow", we.GetID(), "results", exitSignalResults)
 	}
 
 	// This test sends an exit signal, does not wait for workflow to exit, then sends a signal
@@ -146,9 +146,9 @@ func main() {
 	if testSignalAfterExitSignal {
 		err = c.SignalWorkflow(context.Background(), we.GetID(), we.GetRunID(), "exit", "")
 		if err != nil {
-			log.Fatalln("Unable to signal workflow "+we.GetID(), err)
+			log.Fatalln("Unable to signal workflow ", "workflow", we.GetID(), err)
 		}
-		log.Println(we.GetID() + ": Sent exit")
+		log.Println("Sent exit signal", "workflow", we.GetID())
 		// Signals after this test sending more signals after workflow exit
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -161,9 +161,9 @@ func main() {
 	janeGreeting.GreetingKey = "112358132134"
 	err = c.SignalWorkflow(context.Background(), we.GetID(), we.GetRunID(), "greeting", janeGreeting)
 	if err != nil {
-		log.Println("Workflow " + we.GetID() + " not found to signal - this is intentional: " + err.Error())
+		log.Println("Workflow not found to signal, this is intentional", "workflow", we.GetID(), "error", err.Error())
 	}
-	log.Println("Sent " + janeGreeting.GreetingText + " to " + we.GetID())
+    log.Println("Sent greeting", "workflow", we.GetID(), "greeting", janeGreeting.GreetingText)
 
 	if testIgnoreBadBucket {
 		// send a third signal with an incorrect bucket - this will be ignored
@@ -174,18 +174,18 @@ func main() {
 		badBucketGreeting.GreetingKey = "112358132134"
 		err = c.SignalWorkflow(context.Background(), we.GetID(), we.GetRunID(), "greeting", badBucketGreeting)
 		if err != nil {
-			log.Println("Workflow " + we.GetID() + " not found to signal - this is intentional: " + err.Error())
+			log.Println("Workflow not found to signal, this is intentional", "workflow", we.GetID(), "error", err.Error())
 		}
-		log.Println("Sent invalid bucket signal " + badBucketGreeting.GreetingText + ", " + badBucketGreeting.Bucket + " to " + we.GetID())
+		log.Println("Sent invalid bucket signal", "greeting", badBucketGreeting.GreetingText, "bucket", badBucketGreeting.Bucket, "workflow", we.GetID())
 	}
 
 	if testDuplicate {
 		// intentionally send a duplicate signal
 		err = c.SignalWorkflow(context.Background(), we.GetID(), we.GetRunID(), "greeting", janeGreeting)
 		if err != nil {
-			log.Println("Workflow " + we.GetID() + " not found to signal - this is intentional: " + err.Error())
+			log.Println("Workflow not found to signal, this is intentional", "workflow", we.GetID(), "error", err.Error())
 		}
-		log.Println("Sent Duplicate " + janeGreeting.GreetingText + " to " + we.GetID())
+		log.Println("Sent Duplicate signal", "signal", janeGreeting.GreetingText, "key", janeGreeting.GreetingKey, "workflow", we.GetID())
 	}
 
 	if !testSignalAfterWorkflowExit {
@@ -195,7 +195,7 @@ func main() {
 		if err != nil {
 			log.Fatalln("Unable to get workflow results", err)
 		}
-		log.Println(we.GetID() + ": Execution results: " + exitSignalResults)
+		log.Println("Workflow exited", "workflow", we.GetID(), "results", exitSignalResults)
 	}
 
 }

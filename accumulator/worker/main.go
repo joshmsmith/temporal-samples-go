@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	accumulator "github.com/temporalio/samples-go/accumulator"
+	"github.com/temporalio/samples-go/accumulator"
 
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
