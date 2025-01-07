@@ -213,7 +213,7 @@ func runEager() {
 
 	log.Println("Started workflow", "WorkflowID", we.GetID(), "RunID", we.GetRunID())
 
-	timeToFirstResponse := time.Since(start)
+	
 	// The workflow will continue running, completing the transaction.
 
 	
@@ -222,6 +222,7 @@ func runEager() {
 	if err != nil {
 		log.Fatalln("Unable get workflow result", err)
 	}
+	timeToFirstResponse := time.Since(start)
 	timetoWorkflowEnd := time.Since(start)
 	
 	log.Println("Time to first response", timeToFirstResponse)
