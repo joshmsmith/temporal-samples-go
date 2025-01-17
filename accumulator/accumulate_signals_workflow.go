@@ -84,6 +84,7 @@ func AccumulateSignalsWorkflow(ctx workflow.Context, greetings GreetingsInfo) (a
 		greetings.startTime = workflow.Now(ctx)
 	}
 	exitRequested := false
+    pendingMessages := false
 
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 100 * time.Second,
@@ -97,8 +98,9 @@ func AccumulateSignalsWorkflow(ctx workflow.Context, greetings GreetingsInfo) (a
 			selector.AddReceive(workflow.GetSignalChannel(ctx, "greeting"), func(c workflow.ReceiveChannel, more bool) {
 				c.Receive(ctx, &a)
 				unprocessedGreetings = append(unprocessedGreetings, a)
-			})
-			selector.Select(ctx)
+			})            
+			selector.Select(ctx)            
+            pendingMessages = selector.HasPending()
 		}
 	})
 
@@ -133,22 +135,25 @@ func AccumulateSignalsWorkflow(ctx workflow.Context, greetings GreetingsInfo) (a
 		if len(unprocessedGreetings) == 0 { // timeout without a signal coming in, so let's process the greetings and wrap it up!
 			log.Info("Into final processing", "greeting count", len(greetings.GreetingsList))
 			allGreetings = ""
-			err := workflow.ExecuteActivity(ctx, ComposeGreeting, greetings.GreetingsList).Get(ctx, &allGreetings)
+            work := workflow.ExecuteActivity(ctx, ComposeGreeting, greetings.GreetingsList)
+
+			err := work.Get(ctx, &allGreetings)
 			if err != nil {
 				log.Error("ComposeGreeting activity failed.", "Error", err)
 				return allGreetings, err
 			}
 
-			// if !selector.HasPending() { // in case a signal came in while activity was running, check again
-			// 	return allGreetings, nil
-			// } else {
-			// 	log.Info("Received a signal while processing ComposeGreeting activity.")
-			// }
+            if workflow.AllHandlersFinished(ctx) && !pendingMessages {
+
+			 	return allGreetings, nil
+			 } else {
+			 	log.Info("Received a signal while processing ComposeGreeting activity.")
+			 }
 		}
 
 		/* process latest signals
-		 * Here is where we can process individual signals as they come in.
-		 * It's ok to call activities here.
+		 * Here is where we can process the list of unprocessed signals.
+		 * It's ok to block and call activities here.
 		 * This also validates an individual greeting:
 		 * - check for duplicates
 		 * - check for correct bucket
@@ -159,9 +164,9 @@ func AccumulateSignalsWorkflow(ctx workflow.Context, greetings GreetingsInfo) (a
 
 		for _, ug := range toProcess {
 			if ug.Bucket != greetings.BucketKey {
-				log.Warn("Wrong bucket, something is wrong with your signal processing. WF Bucket: [" + greetings.BucketKey + "], greeting bucket: [" + ug.Bucket + "]")
+				log.Warn("Wrong bucket, something is wrong with your signal processing.", "WF Bucket" + greetings.BucketKey, "greeting bucket", ug.Bucket )
 			} else if greetings.UniqueGreetingKeys[ug.GreetingKey] {
-				log.Warn("Duplicate Greeting Key. Key: [" + ug.GreetingKey + "]")
+				log.Warn("Duplicate Greeting Key.", "Key", ug.GreetingKey)
 			} else {
 				greetings.UniqueGreetingKeys[ug.GreetingKey] = true
 				greetings.GreetingsList = append(greetings.GreetingsList, ug)
